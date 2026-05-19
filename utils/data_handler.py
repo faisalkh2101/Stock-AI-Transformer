@@ -11,33 +11,39 @@ TOP_TICKERS = [
 @st.cache_data(ttl=3600)
 def fetch_dashboard_data():
     """Fetches the latest prices and calculates 24h changes for the home page."""
-    try:
-        tickers = yf.Tickers(" ".join(TOP_TICKERS))
-        stock_stats = []
-        for ticker in TOP_TICKERS:
-            hist = tickers.tickers[ticker].history(period="5d")
+    stock_stats = []
+    
+    # We fetch one by one to avoid triggering Yahoo's cloud anti-bot filters
+    for ticker_symbol in TOP_TICKERS:
+        try: # The try block is now INSIDE the loop
+            ticker = yf.Ticker(ticker_symbol)
+            hist = ticker.history(period="5d")
             
-            # CRITICAL FIX 1: Drop any rows where Yahoo Finance returned NaN for the Close price
+            # Drop incomplete rows
             hist = hist.dropna(subset=['Close'])
             
             if len(hist) >= 2:
                 current_price = hist['Close'].iloc[-1]
                 prev_price = hist['Close'].iloc[-2]
                 pct_change = ((current_price - prev_price) / prev_price) * 100
+                
                 stock_stats.append({
-                    "Ticker": ticker,
+                    "Ticker": ticker_symbol,
                     "Price": round(current_price, 2),
                     "Change": round(pct_change, 2)
                 })
-        df_stats = pd.DataFrame(stock_stats)
-        if not df_stats.empty:
-            gainers = df_stats.sort_values(by="Change", ascending=False).head(5)
-            losers = df_stats.sort_values(by="Change", ascending=True).head(5)
-            return df_stats, gainers, losers
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    except Exception as e:
-        print(f"Error fetching data: {e}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        except Exception:
+            # If Yahoo times out on this specific stock, skip it and keep building the dashboard
+            continue
+            
+    df_stats = pd.DataFrame(stock_stats)
+    
+    if not df_stats.empty:
+        gainers = df_stats.sort_values(by="Change", ascending=False).head(5)
+        losers = df_stats.sort_values(by="Change", ascending=True).head(5)
+        return df_stats, gainers, losers
+        
+    return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 @st.cache_data
 def get_historical_data(ticker, start_date, end_date):
@@ -49,7 +55,7 @@ def get_historical_data(ticker, start_date, end_date):
         
     df.reset_index(inplace=True)
     
-    # CRITICAL FIX 2: Drop the empty/incomplete rows Yahoo Finance appends
+    # CRITICAL FIX: Drop the empty/incomplete rows Yahoo Finance appends
     # This prevents the detailed view and Transformer model from breaking
     if not df.empty and 'Close' in df.columns:
         df = df.dropna(subset=['Close'])
